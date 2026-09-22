@@ -449,5 +449,103 @@ namespace ClientAccess.Services
 
             return null;
         }
+
+        // ========================================================
+        // AUDITORÍA Y LOGS DE ACCESOS EN TIEMPO REAL
+        // ========================================================
+
+        public void LogAccessAsync(string accessKey, string? clientName, string? machineName, string? ipAddress, string endpoint, string actionStatus, bool canRun, int workerId, string? message)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    string sql = @"
+                        INSERT INTO access_logs (
+                            access_key, client_name, machine_name, ip_address, 
+                            endpoint, action_status, can_run, worker_id, message, created_at
+                        ) VALUES (
+                            @access_key, @client_name, @machine_name, @ip_address,
+                            @endpoint, @action_status, @can_run, @worker_id, @message, CURRENT_TIMESTAMP
+                        );";
+
+                    var parameters = new List<NpgsqlParameter>
+                    {
+                        new NpgsqlParameter("access_key", (object?)accessKey ?? ""),
+                        new NpgsqlParameter("client_name", (object?)clientName ?? DBNull.Value),
+                        new NpgsqlParameter("machine_name", (object?)machineName ?? DBNull.Value),
+                        new NpgsqlParameter("ip_address", (object?)ipAddress ?? DBNull.Value),
+                        new NpgsqlParameter("endpoint", (object?)endpoint ?? ""),
+                        new NpgsqlParameter("action_status", (object?)actionStatus ?? "UNKNOWN"),
+                        new NpgsqlParameter("can_run", canRun),
+                        new NpgsqlParameter("worker_id", workerId),
+                        new NpgsqlParameter("message", (object?)message ?? DBNull.Value)
+                    };
+
+                    await _database.ExecutePostgresNonQueryAsync(sql, parameters);
+                }
+                catch
+                {
+                    // Registro silencioso en segundo plano sin interrumpir operaciones
+                }
+            });
+        }
+
+        public async Task<List<AccessLogDto>> GetAccessLogsAsync(int limit = 100, string? search = null)
+        {
+            string sql;
+            var parameters = new List<NpgsqlParameter>
+            {
+                new NpgsqlParameter("limit", limit > 0 ? limit : 100)
+            };
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                sql = @"
+                    SELECT log_id, access_key, client_name, machine_name, ip_address, 
+                           endpoint, action_status, can_run, worker_id, message, created_at
+                    FROM access_logs
+                    WHERE access_key ILIKE @search 
+                       OR client_name ILIKE @search 
+                       OR machine_name ILIKE @search 
+                       OR ip_address ILIKE @search
+                       OR action_status ILIKE @search
+                    ORDER BY created_at DESC
+                    LIMIT @limit;";
+                parameters.Add(new NpgsqlParameter("search", $"%{search.Trim()}%"));
+            }
+            else
+            {
+                sql = @"
+                    SELECT log_id, access_key, client_name, machine_name, ip_address, 
+                           endpoint, action_status, can_run, worker_id, message, created_at
+                    FROM access_logs
+                    ORDER BY created_at DESC
+                    LIMIT @limit;";
+            }
+
+            DataTable dt = await _database.ExecutePostgresQueryAsync(sql, parameters);
+            var logs = new List<AccessLogDto>();
+
+            foreach (DataRow row in dt.Rows)
+            {
+                logs.Add(new AccessLogDto
+                {
+                    LogId = Convert.ToInt64(row["log_id"]),
+                    AccessKey = row["access_key"]?.ToString() ?? "",
+                    ClientName = row["client_name"]?.ToString() ?? "",
+                    MachineName = row["machine_name"]?.ToString() ?? "",
+                    IpAddress = row["ip_address"]?.ToString() ?? "",
+                    Endpoint = row["endpoint"]?.ToString() ?? "",
+                    ActionStatus = row["action_status"]?.ToString() ?? "",
+                    CanRun = row["can_run"] != DBNull.Value && Convert.ToBoolean(row["can_run"]),
+                    WorkerId = row["worker_id"] != DBNull.Value ? Convert.ToInt32(row["worker_id"]) : 1,
+                    Message = row["message"]?.ToString() ?? "",
+                    CreatedAt = Convert.ToDateTime(row["created_at"])
+                });
+            }
+
+            return logs;
+        }
     }
 }

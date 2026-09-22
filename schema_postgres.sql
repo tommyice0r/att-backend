@@ -135,6 +135,27 @@ CREATE TABLE IF NOT EXISTS global_config (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ------------------------------------------------------------------------------
+-- 8. TABLA: access_logs (Auditoría Central de Accesos y Verificaciones)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS access_logs (
+    log_id BIGSERIAL PRIMARY KEY,
+    access_key VARCHAR(100) NOT NULL,
+    client_name VARCHAR(150),
+    machine_name VARCHAR(150),
+    ip_address VARCHAR(50),
+    endpoint VARCHAR(100),
+    action_status VARCHAR(50),
+    can_run BOOLEAN NOT NULL DEFAULT FALSE,
+    worker_id INT NULL DEFAULT 1,
+    message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_logs_created ON access_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_access_logs_key ON access_logs(access_key);
+CREATE INDEX IF NOT EXISTS idx_access_logs_machine ON access_logs(machine_name);
+
 -- ==============================================================================
 -- FUNCIONES Y PROCEDIMIENTOS ALMACENADOS (POSTGRESQL / PLPGSQL)
 -- ==============================================================================

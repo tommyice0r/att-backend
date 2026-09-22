@@ -10,12 +10,26 @@ namespace ClientAccess.Controllers
     {
         private readonly ClientAccessServices _clientAccessServices = new ClientAccessServices();
 
+        private string GetClientIp()
+        {
+            if (Request.Headers.TryGetValue("X-Forwarded-For", out var fwd) && !string.IsNullOrWhiteSpace(fwd))
+                return fwd.ToString().Split(',')[0].Trim();
+
+            if (Request.Headers.TryGetValue("X-Real-IP", out var real) && !string.IsNullOrWhiteSpace(real))
+                return real.ToString().Trim();
+
+            return HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Desconocida";
+        }
+
         // POST: /Api/ClientAccess/secure/activate
         [HttpPost("secure/activate")]
         public async Task<IActionResult> Activate([FromBody] ActivateAccessRequest request)
         {
+            string ip = GetClientIp();
+
             if (request == null || string.IsNullOrWhiteSpace(request.AccessKey))
             {
+                _clientAccessServices.LogAccessAsync("", "Desconocido", "Web Login", ip, "/secure/activate", "INVALID", false, 1, "Clave de acceso requerida");
                 return BadRequest(new
                 {
                     success = false,
@@ -27,6 +41,8 @@ namespace ClientAccess.Controllers
             }
 
             var result = await _clientAccessServices.ActivateAccessAsync(request);
+
+            _clientAccessServices.LogAccessAsync(request.AccessKey, result.ClientName, "Panel Web", ip, "/secure/activate", result.AccessStatus, result.CanRun, 1, result.Message);
 
             if (result.AccessStatus == "INVALID")
             {
@@ -46,8 +62,11 @@ namespace ClientAccess.Controllers
         [HttpPost("secure/check")]
         public async Task<IActionResult> VerifyBot([FromBody] BotVerifyRequest request)
         {
+            string ip = GetClientIp();
+
             if (request == null || string.IsNullOrWhiteSpace(request.AccessKey))
             {
+                _clientAccessServices.LogAccessAsync("", "Desconocido", request?.MachineName ?? "Bot", ip, "/bot/verify", "INVALID", false, request?.WorkerId ?? 1, "Clave de acceso requerida");
                 return BadRequest(new
                 {
                     success = false,
@@ -58,6 +77,18 @@ namespace ClientAccess.Controllers
             }
 
             var result = await _clientAccessServices.VerifyBotAccessAsync(request);
+
+            _clientAccessServices.LogAccessAsync(
+                request.AccessKey,
+                result.ClientName,
+                string.IsNullOrWhiteSpace(request.MachineName) ? "Bot Worker" : request.MachineName,
+                ip,
+                "/bot/verify",
+                result.AccessStatus,
+                result.CanRun,
+                request.WorkerId,
+                result.Message
+            );
 
             if (!result.CanRun)
             {
@@ -72,8 +103,11 @@ namespace ClientAccess.Controllers
         [HttpGet("bot/verify")]
         public async Task<IActionResult> VerifyBotGet([FromQuery] string? accessKey, [FromQuery] int workerId = 1, [FromQuery] string? machineName = null)
         {
+            string ip = GetClientIp();
+
             if (string.IsNullOrWhiteSpace(accessKey))
             {
+                _clientAccessServices.LogAccessAsync("", "Desconocido", machineName ?? "Bot", ip, "/bot/verify", "INVALID", false, workerId, "Parámetro 'accessKey' requerido en URL");
                 return BadRequest(new
                 {
                     success = false,
@@ -83,12 +117,26 @@ namespace ClientAccess.Controllers
                 });
             }
 
-            var result = await _clientAccessServices.VerifyBotAccessAsync(new BotVerifyRequest
+            var req = new BotVerifyRequest
             {
                 AccessKey = accessKey,
                 WorkerId = workerId,
                 MachineName = machineName
-            });
+            };
+
+            var result = await _clientAccessServices.VerifyBotAccessAsync(req);
+
+            _clientAccessServices.LogAccessAsync(
+                accessKey,
+                result.ClientName,
+                string.IsNullOrWhiteSpace(machineName) ? "Bot Worker" : machineName,
+                ip,
+                "/bot/verify",
+                result.AccessStatus,
+                result.CanRun,
+                workerId,
+                result.Message
+            );
 
             if (!result.CanRun)
             {
@@ -143,6 +191,7 @@ namespace ClientAccess.Controllers
             string? key = GetProvidedAdminKey(explicitKey);
             if (!await _clientAccessServices.ValidateAdminKeyAsync(key))
             {
+                _clientAccessServices.LogAccessAsync(key ?? "", "Intruso / No Autorizado", "Admin Endpoint", GetClientIp(), "/admin/list", "DENIED", false, 1, "Intento de listar licencias sin autorización");
                 return StatusCode(StatusCodes.Status403Forbidden, new
                 {
                     success = false,
@@ -177,6 +226,7 @@ namespace ClientAccess.Controllers
             string? key = GetProvidedAdminKey(request?.AdminKey);
             if (!await _clientAccessServices.ValidateAdminKeyAsync(key))
             {
+                _clientAccessServices.LogAccessAsync(key ?? "", "Intruso / No Autorizado", "Admin Endpoint", GetClientIp(), "/admin/add-days", "DENIED", false, 1, "Intento de sumar días sin autorización");
                 return StatusCode(StatusCodes.Status403Forbidden, new
                 {
                     success = false,
@@ -214,6 +264,8 @@ namespace ClientAccess.Controllers
                     });
                 }
 
+                _clientAccessServices.LogAccessAsync(request.AccessKey, "Admin Action", "Admin Panel", GetClientIp(), "/admin/add-days", "SUCCESS", true, 1, $"Admin sumó {request.Days} días a {request.AccessKey}");
+
                 return Ok(new
                 {
                     success = true,
@@ -240,6 +292,7 @@ namespace ClientAccess.Controllers
             string? key = GetProvidedAdminKey(request?.AdminKey);
             if (!await _clientAccessServices.ValidateAdminKeyAsync(key))
             {
+                _clientAccessServices.LogAccessAsync(key ?? "", "Intruso / No Autorizado", "Admin Endpoint", GetClientIp(), "/admin/create", "DENIED", false, 1, "Intento de crear licencia sin autorización");
                 return StatusCode(StatusCodes.Status403Forbidden, new
                 {
                     success = false,
@@ -268,6 +321,8 @@ namespace ClientAccess.Controllers
                     });
                 }
 
+                _clientAccessServices.LogAccessAsync(created.AccessKey, created.ClientName, "Admin Panel", GetClientIp(), "/admin/create", "SUCCESS", true, 1, $"Licencia creada para {created.ClientName}");
+
                 return Ok(new
                 {
                     success = true,
@@ -281,6 +336,57 @@ namespace ClientAccess.Controllers
                 {
                     success = false,
                     message = $"Error al crear licencia: {ex.Message}"
+                });
+            }
+        }
+
+        // ========================================================
+        // AUDITORÍA Y LOGS EN TIEMPO REAL (SOLO ADMINISTRADOR MAESTRO)
+        // ========================================================
+
+        // POST: /Api/ClientAccess/admin/logs
+        [HttpPost("admin/logs")]
+        public async Task<IActionResult> GetLogsPost([FromBody] AdminGetLogsRequest? request = null)
+        {
+            return await HandleGetLogs(request?.AdminKey, request?.Limit ?? 100, request?.Search);
+        }
+
+        // GET: /Api/ClientAccess/admin/logs
+        [HttpGet("admin/logs")]
+        public async Task<IActionResult> GetLogsGet([FromQuery] string? adminKey = null, [FromQuery] int limit = 100, [FromQuery] string? search = null)
+        {
+            return await HandleGetLogs(adminKey, limit, search);
+        }
+
+        private async Task<IActionResult> HandleGetLogs(string? explicitKey, int limit, string? search)
+        {
+            string? key = GetProvidedAdminKey(explicitKey);
+            if (!await _clientAccessServices.ValidateAdminKeyAsync(key))
+            {
+                _clientAccessServices.LogAccessAsync(key ?? "", "Intruso / No Autorizado", "Admin Logs", GetClientIp(), "/admin/logs", "DENIED", false, 1, "Intento de consultar logs sin permisos de Administrador");
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    success = false,
+                    message = "Acceso denegado: Se requieren permisos de Administrador Maestro para acceder a este recurso."
+                });
+            }
+
+            try
+            {
+                var logs = await _clientAccessServices.GetAccessLogsAsync(limit, search);
+                return Ok(new
+                {
+                    success = true,
+                    count = logs.Count,
+                    data = logs
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = $"Error obteniendo logs de acceso: {ex.Message}"
                 });
             }
         }
