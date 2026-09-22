@@ -891,7 +891,31 @@ INSERT INTO client_access_records (
     500.00
 ) ON CONFLICT (access_key) DO NOTHING;
 
--- 3. Valores por defecto de Configuración Global
+-- 3. Licencia Expirada de Prueba (Vencida hace 15 días para pruebas de bloqueo y mora)
+INSERT INTO client_access_records (
+    client_name,
+    access_key,
+    app_code,
+    access_status,
+    is_master,
+    last_payment_at,
+    expires_at,
+    grace_days,
+    late_fee_per_day
+) VALUES (
+    'Cliente Expirado (Pruebas)',
+    'ATT-EXPIRED-TEST-2026',
+    'att-bot',
+    'ACTIVE',
+    FALSE,
+    CURRENT_TIMESTAMP - INTERVAL '45 days',
+    CURRENT_TIMESTAMP - INTERVAL '15 days',
+    3,
+    500.00
+) ON CONFLICT (access_key) DO UPDATE
+SET expires_at = CURRENT_TIMESTAMP - INTERVAL '15 days', is_master = FALSE;
+
+-- 4. Valores por defecto de Configuración Global
 INSERT INTO global_config (key, value, description) VALUES
     ('KEYABS', '', 'GoLogin API Key'),
     ('KEY', '', 'Cryptolens Key / Access Key'),

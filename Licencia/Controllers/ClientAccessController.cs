@@ -102,11 +102,54 @@ namespace ClientAccess.Controllers
         // ENDPOINTS ADMINISTRATIVOS (LICENCIA MAESTRA)
         // ========================================================
 
+        private string? GetProvidedAdminKey(string? explicitKey = null)
+        {
+            if (!string.IsNullOrWhiteSpace(explicitKey))
+                return explicitKey.Trim();
+
+            if (Request.Headers.TryGetValue("X-Admin-Key", out var headerKey) && !string.IsNullOrWhiteSpace(headerKey))
+                return headerKey.ToString().Trim();
+
+            if (Request.Headers.TryGetValue("Authorization", out var authHeader) && !string.IsNullOrWhiteSpace(authHeader))
+            {
+                var headerStr = authHeader.ToString().Trim();
+                if (headerStr.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                    return headerStr.Substring("Bearer ".Length).Trim();
+                return headerStr;
+            }
+
+            if (Request.Query.TryGetValue("adminKey", out var queryKey) && !string.IsNullOrWhiteSpace(queryKey))
+                return queryKey.ToString().Trim();
+
+            return null;
+        }
+
         // POST: /Api/ClientAccess/admin/list
         [HttpPost("admin/list")]
-        [HttpGet("admin/list")]
-        public async Task<IActionResult> ListAllLicenses()
+        public async Task<IActionResult> ListAllLicensesPost([FromBody] AdminListLicensesRequest? request = null)
         {
+            return await HandleListAllLicenses(request?.AdminKey);
+        }
+
+        // GET: /Api/ClientAccess/admin/list
+        [HttpGet("admin/list")]
+        public async Task<IActionResult> ListAllLicensesGet([FromQuery] string? adminKey = null)
+        {
+            return await HandleListAllLicenses(adminKey);
+        }
+
+        private async Task<IActionResult> HandleListAllLicenses(string? explicitKey)
+        {
+            string? key = GetProvidedAdminKey(explicitKey);
+            if (!await _clientAccessServices.ValidateAdminKeyAsync(key))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    success = false,
+                    message = "Acceso denegado: Se requieren permisos de Administrador Maestro para acceder a este recurso."
+                });
+            }
+
             try
             {
                 var licenses = await _clientAccessServices.GetAllLicensesAsync();
@@ -131,6 +174,16 @@ namespace ClientAccess.Controllers
         [HttpPost("admin/add-days")]
         public async Task<IActionResult> AddDays([FromBody] AdminAddDaysRequest request)
         {
+            string? key = GetProvidedAdminKey(request?.AdminKey);
+            if (!await _clientAccessServices.ValidateAdminKeyAsync(key))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    success = false,
+                    message = "Acceso denegado: Se requieren permisos de Administrador Maestro para acceder a este recurso."
+                });
+            }
+
             if (request == null || string.IsNullOrWhiteSpace(request.AccessKey))
             {
                 return BadRequest(new
@@ -184,6 +237,16 @@ namespace ClientAccess.Controllers
         [HttpPost("admin/create")]
         public async Task<IActionResult> CreateLicense([FromBody] AdminCreateLicenseRequest request)
         {
+            string? key = GetProvidedAdminKey(request?.AdminKey);
+            if (!await _clientAccessServices.ValidateAdminKeyAsync(key))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    success = false,
+                    message = "Acceso denegado: Se requieren permisos de Administrador Maestro para acceder a este recurso."
+                });
+            }
+
             if (request == null || string.IsNullOrWhiteSpace(request.ClientName))
             {
                 return BadRequest(new

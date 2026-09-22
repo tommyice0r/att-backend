@@ -229,6 +229,48 @@ namespace ClientAccess.Services
         // MÉTODOS DE ADMINISTRACIÓN (SUPER ADMIN / LICENCIA MAESTRA)
         // ========================================================
 
+        public async Task<bool> ValidateAdminKeyAsync(string? key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+                return false;
+
+            string cleanKey = key.Trim();
+
+            // 1. Validar contra clave maestra de configuración o entorno
+            string masterEnv = Environment.GetEnvironmentVariable("AdminSettings__MasterKey") ?? "ATT-MASTER-ADMIN-2026";
+            if (string.Equals(cleanKey, masterEnv, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // 2. Validar contra la base de datos PostgreSQL: registro con is_master = true y activo
+            try
+            {
+                var parameters = new List<NpgsqlParameter>
+                {
+                    new NpgsqlParameter("p_key", cleanKey)
+                };
+
+                string sql = "SELECT is_master, access_status FROM client_access_records WHERE access_key = @p_key LIMIT 1;";
+                DataTable dt = await _database.ExecutePostgresQueryAsync(sql, parameters);
+
+                if (dt.Rows.Count > 0)
+                {
+                    DataRow row = dt.Rows[0];
+                    bool isMaster = row["is_master"] != DBNull.Value && Convert.ToBoolean(row["is_master"]);
+                    string status = row["access_status"]?.ToString() ?? "";
+                    if (isMaster && !string.Equals(status, "DISABLED", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // En caso de fallo de conexión de BD, no otorgar acceso no autenticado
+            }
+
+            return false;
+        }
+
         public async Task<List<LicenseItemDto>> GetAllLicensesAsync()
         {
             string sql = @"

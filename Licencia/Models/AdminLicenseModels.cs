@@ -1,5 +1,10 @@
 namespace ClientAccess.Models
 {
+    public class AdminListLicensesRequest
+    {
+        public string? AdminKey { get; set; }
+    }
+
     public class AdminAddDaysRequest
     {
         public string? AccessKey { get; set; }
